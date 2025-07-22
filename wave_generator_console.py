@@ -364,9 +364,19 @@ class WaveGenerator:
                 current_time = time.time()
                 with self.phase_lock:
                     elapsed_time = current_time - self.playback_start_time
-                    transition_start_phase = (elapsed_time * old_frequency * 2 * np.pi) % (2 * np.pi)
+                    current_phase = (elapsed_time * old_frequency * 2 * np.pi) % (2 * np.pi)
+                    
+                    # Find the nearest zero-crossing point for smooth transition
+                    transition_start_phase = self.find_nearest_zero_crossing(current_phase, old_wave_type)
+                    
+                    # Calculate time offset to reach the zero crossing
+                    phase_diff = (transition_start_phase - current_phase) % (2 * np.pi)
+                    if phase_diff > np.pi:
+                        phase_diff -= 2 * np.pi
+                    time_offset = phase_diff / (old_frequency * 2 * np.pi)
+                    
                     self.current_phase = transition_start_phase
-                    self.playback_start_time = current_time
+                    self.playback_start_time = current_time + time_offset
                 
                 
                 # Generate new sound with updated parameters and phase continuity
@@ -479,6 +489,29 @@ class WaveGenerator:
             
             # Update user selected frequency to match
             self.user_selected_frequency = self.frequency
+    
+    def find_nearest_zero_crossing(self, current_phase, wave_type):
+        """Find the nearest zero-crossing point for smooth waveform transitions"""
+        # Normalize phase to [0, 2π]
+        phase = current_phase % (2 * np.pi)
+        
+        if wave_type == "sine":
+            # For sine wave, zero crossings are at 0, π, 2π
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        elif wave_type == "square":
+            # For square wave, zero crossings are at 0, π, 2π (transitions)
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        elif wave_type == "sawtooth":
+            # For sawtooth wave, zero crossing is at π (middle of the cycle)
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        else:
+            # Default to sine wave zero crossings
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        
+        # Find the nearest zero crossing
+        nearest_crossing = min(zero_crossings, key=lambda x: min(abs(x - phase), abs(x - phase + 2*np.pi), abs(x - phase - 2*np.pi)))
+        
+        return nearest_crossing
     
     def adjust_volume(self, direction):
         """Adjust volume up or down"""

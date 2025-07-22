@@ -426,9 +426,19 @@ class WaveGenerator:
                 current_time = time.time()
                 with self.phase_lock:
                     elapsed_time = current_time - self.playback_start_time
-                    transition_start_phase = (elapsed_time * old_frequency * 2 * np.pi) % (2 * np.pi)
+                    current_phase = (elapsed_time * old_frequency * 2 * np.pi) % (2 * np.pi)
+                    
+                    # Find the nearest zero-crossing point for smooth transition
+                    transition_start_phase = self.find_nearest_zero_crossing(current_phase, old_wave_type)
+                    
+                    # Calculate time offset to reach the zero crossing
+                    phase_diff = (transition_start_phase - current_phase) % (2 * np.pi)
+                    if phase_diff > np.pi:
+                        phase_diff -= 2 * np.pi
+                    time_offset = phase_diff / (old_frequency * 2 * np.pi)
+                    
                     self.current_phase = transition_start_phase
-                    self.playback_start_time = current_time
+                    self.playback_start_time = current_time + time_offset
                 
                 
                 # Generate new sound with updated parameters and phase continuity
@@ -494,6 +504,46 @@ class WaveGenerator:
         channel_a.stop()
         channel_b = pygame.mixer.Channel(1)
         channel_b.stop()
+    
+    def find_nearest_zero_crossing(self, current_phase, wave_type):
+        """Find the nearest zero-crossing point for smooth waveform transitions"""
+        # Normalize phase to [0, 2π]
+        phase = current_phase % (2 * np.pi)
+        
+        if wave_type == "sine":
+            # For sine wave, zero crossings are at 0, π, 2π
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        elif wave_type == "square":
+            # For square wave, zero crossings are at 0, π, 2π (transitions)
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        elif wave_type == "sawtooth":
+            # For sawtooth wave, zero crossing is at π (middle of the cycle)
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        elif wave_type == "custom":
+            # For custom waveform, find actual zero crossings
+            zero_crossings = self.find_custom_zero_crossings()
+        else:
+            # Default to sine wave zero crossings
+            zero_crossings = [0, np.pi, 2 * np.pi]
+        
+        # Find the nearest zero crossing
+        nearest_crossing = min(zero_crossings, key=lambda x: min(abs(x - phase), abs(x - phase + 2*np.pi), abs(x - phase - 2*np.pi)))
+        
+        return nearest_crossing
+    
+    def find_custom_zero_crossings(self):
+        """Find zero crossings in custom waveform"""
+        zero_crossings = [0, 2 * np.pi]  # Always include start and end
+        
+        # Find actual zero crossings in the custom waveform
+        for i in range(len(self.custom_waveform) - 1):
+            if (self.custom_waveform[i] <= 0 and self.custom_waveform[i + 1] > 0) or \
+               (self.custom_waveform[i] >= 0 and self.custom_waveform[i + 1] < 0):
+                # Zero crossing found, convert index to phase
+                phase = (i / len(self.custom_waveform)) * 2 * np.pi
+                zero_crossings.append(phase)
+        
+        return sorted(zero_crossings)
     
     def toggle_play_pause(self):
         """Toggle play/pause state"""
