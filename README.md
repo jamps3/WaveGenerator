@@ -4,6 +4,15 @@ A Python-based wave generator with modular audio backends, featuring professiona
 
 ## Features
 
+Development checkpoint (2026-10-19): the Kivy migration is unfinished and is
+preserved on a WIP branch, not promoted as a stable replacement for master.
+Nine over-indented control labels were corrected. All root Python sources pass
+`python -B -m unittest test_source_syntax -v`, and the GUI source compiles.
+These checks do not import GUI/audio/keyboard backends or test sound output.
+Legacy Pygame handlers and duplicate methods still need reconciliation, and the
+old local Python 3.11 virtual environment references a missing interpreter.
+Rebuild a suitable runtime and validate GUI/audio before treating it as usable.
+
 - **Multiple Wave Types**: Sine, square, sawtooth, and custom waveforms
 - **Frequency Control**: Adjustable frequency with customizable step sizes
 - **Volume Control**: 0-100% volume adjustment
@@ -24,7 +33,7 @@ The wave generator uses a modular architecture for maximum flexibility:
 
 ## Files
 
-- `wave_generator.py` - Main GUI interface with custom waveform drawing and professional audio
+- `wave_generator.py` - Main GUI interface using Kivy with professional audio
 - `wave_generator_console.py` - Console-based interface for text-based operation
 - `wave_engine.py` - Shared wave generation engine with smooth transitions
 - `professional_tone_generator.py` - High-quality audio generator using sounddevice
@@ -34,19 +43,20 @@ The wave generator uses a modular architecture for maximum flexibility:
 
 ## Installation
 
-1. Install Python 3.7 or higher
-2. Install required dependencies:
+1. Install Python 3.11.9 (required for Kivy GUI)
+2. Create a virtual environment:
+   ```bash
+   python3.11 -m venv .venv
+   .venv\Scripts\activate  # On Windows
+   ```
+3. Install required dependencies:
    ```bash
    pip install -r requirements.txt
-   ```
-3. (Optional) For professional audio quality, install sounddevice:
-   ```bash
-   pip install sounddevice
    ```
 
 ## Usage
 
-### GUI Version (Recommended)
+### GUI Version (Migration In Progress)
 ```bash
 python wave_generator.py
 ```
@@ -69,24 +79,14 @@ Text-based interface for basic operation without GUI dependencies.
 
 ### GUI Version
 All console controls plus:
-- **C**: Toggle custom waveform drawing mode (when custom wave type is selected)
-- **R**: Reset custom waveform to default sine wave
-- **Mouse**: Draw custom waveforms when in drawing mode
-
-## Custom Waveform Drawing
-
-1. Select "Custom" as the wave type using arrow keys
-2. Press 'C' to enter drawing mode
-3. Click and drag in the waveform visualization area to draw your custom waveform
-4. Press 'C' again to exit drawing mode
-5. Press 'R' to reset the custom waveform
+- **Mouse**: Not currently used (future custom waveform drawing)
 
 ## Dependencies
 
-- `pygame` - Audio playback and GUI
+- `kivy` - Modern GUI framework for the interface
 - `numpy` - Mathematical operations and array handling
 - `keyboard` - Keyboard input handling (console version)
-- `sounddevice` - Professional low-latency audio (optional, for enhanced audio quality)
+- `sounddevice` - Professional low-latency audio
 
 ## Audio Backends
 
@@ -99,15 +99,14 @@ All console controls plus:
 - Uses `pygame` mixer for basic audio functionality
 - Good for systems without sounddevice support
 - May have slightly higher latency but fully functional
+- Used by console version
 
 ## Features by Version
 
 ### GUI Version (wave_generator.py)
-- Graphical user interface with icons and visual feedback
+- Modern graphical user interface using Kivy
 - Real-time waveform visualization with animation
-- Custom waveform drawing with mouse input
-- Enhanced frequency sweep visualization
-- Professional audio backend (sounddevice) with fallback to pygame
+- Professional audio backend using sounddevice
 - Smooth parameter transitions and anti-click protection
 
 ### Console Version (wave_generator_console.py)

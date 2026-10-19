@@ -1,4 +1,15 @@
-import pygame
+from kivy.app import App
+from kivy.uix.widget import Widget
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.slider import Slider
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.scrollview import ScrollView
+from kivy.graphics import Color, Rectangle, Line, Ellipse
+from kivy.clock import Clock
+from kivy.core.window import Window
+from kivy.metrics import dp
 import numpy as np
 import keyboard
 import threading
@@ -16,56 +27,43 @@ except ImportError:
     exit(1)
 
 
-class WaveGenerator:
+class WaveGenerator(App):
     def __init__(self):
-        # Initialize pygame for GUI only (no audio)
-        pygame.init()
-        
+        super().__init__()
         # Professional audio settings
         self.audio_sample_rate = 44100
         self.audio_block_size = 512
-        
+
         # Audio state for sounddevice
         self.audio_stream = None
         self.audio_phase = 0.0
         self.audio_lock = threading.Lock()
         self.audio_running = False
 
-        # Initialize graphical display
-        self.WINDOW_WIDTH = 800
-        self.WINDOW_HEIGHT = 600
-        self.screen = pygame.display.set_mode(
-            (self.WINDOW_WIDTH, self.WINDOW_HEIGHT), vsync=1
-        )
-        pygame.display.set_caption("🎵 Wave Generator 🎵")
+        # Window settings
+        Window.size = (1200, 800)
+        Window.title = "Wave Generator"
 
-        # Colors
-        self.BLACK = (0, 0, 0)
-        self.WHITE = (255, 255, 255)
-        self.BLUE = (100, 149, 237)
-        self.GREEN = (60, 179, 113)
-        self.RED = (220, 20, 60)
-        self.YELLOW = (255, 215, 0)
-        self.GRAY = (128, 128, 128)
-        self.LIGHT_GRAY = (211, 211, 211)
-        self.DARK_GRAY = (64, 64, 64)
-        self.ORANGE = (255, 165, 0)
-
-        # Fonts
-        self.font_large = pygame.font.Font(None, 36)
-        self.font_medium = pygame.font.Font(None, 28)
-        self.font_small = pygame.font.Font(None, 24)
+        # Colors (Kivy uses 0-1 range)
+        self.BLACK = (0, 0, 0, 1)
+        self.WHITE = (1, 1, 1, 1)
+        self.BLUE = (0.39, 0.58, 0.93, 1)
+        self.GREEN = (0.24, 0.7, 0.44, 1)
+        self.RED = (0.86, 0.08, 0.24, 1)
+        self.YELLOW = (1, 0.84, 0, 1)
+        self.GRAY = (0.5, 0.5, 0.5, 1)
+        self.LIGHT_GRAY = (0.83, 0.83, 0.83, 1)
+        self.DARK_GRAY = (0.25, 0.25, 0.25, 1)
+        self.ORANGE = (1, 0.65, 0, 1)
 
         # Animation variables
         self.wave_animation_offset = 0
         self.last_frame_time = time.time()
 
-        # Menu layout
-        self.menu_start_y = 120
-        self.menu_item_height = 40
-        self.menu_padding = 20
+        # UI elements
+        self.edit_mode = 'points'  # 'points' or 'free'
 
-        self.duration = 10.0  # Duration of each wave cycle in seconds 
+        self.duration = 10.0  # Duration of each wave cycle in seconds
         self.is_playing = False
         
         # Initialize the shared wave engine with audio sample rate
@@ -97,6 +95,9 @@ class WaveGenerator:
             np.linspace(0, 2 * np.pi, 1000)
         )  # Default to sine wave
         self.drawing_mode = False
+        self.edit_mode = 'points'  # 'points' or 'free'
+        self.control_points = [(i / 9.0, math.sin(i / 9.0 * 2 * math.pi)) for i in range(10)]
+        self.dragging_point = None
         self.drawing_points = []
 
         # Hz step options
@@ -132,6 +133,477 @@ class WaveGenerator:
         
         # Initialize audio system
         self._initialize_audio()
+
+    def build(self):
+        # Root layout
+        root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
+
+        # Title bar
+        title_bar = BoxLayout(size_hint_y=0.08, padding=dp(5))
+        title = Label(text="Wave Generator", font_size=dp(30), color=self.YELLOW, bold=True, halign='center')
+        title_bar.add_widget(title)
+        root.add_widget(title_bar)
+
+        # Status bar
+        self.status_label = Label(text="Status: Paused", font_size=dp(20), color=self.RED, size_hint_y=0.05, halign='center')
+        root.add_widget(self.status_label)
+
+        # Main content area
+        main = BoxLayout(orientation='horizontal', size_hint_y=0.87, spacing=dp(10))
+
+        # Left panel: Controls
+        controls_scroll = ScrollView(size_hint_x=0.4)
+        controls = GridLayout(cols=1, size_hint_y=None, spacing=dp(5), padding=dp(5))
+        controls.bind(minimum_height=controls.setter('height'))
+
+        # Play/Pause
+        play_btn = Button(text="Play/Pause", font_size=dp(16), background_color=self.GREEN, size_hint_y=None, height=dp(40))
+        play_btn.bind(on_press=self.on_play_pause)
+        controls.add_widget(Label(text="Playback:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(play_btn)
+
+        # Volume
+        vol_label = Label(text=f"Volume: {self.volume}%", font_size=dp(14), color=self.WHITE)
+        self.volume_slider = Slider(min=0, max=100, value=self.volume, size_hint_y=None, height=dp(40))
+        self.volume_slider.bind(on_touch_up=self.on_volume_change)
+        controls.add_widget(vol_label)
+        controls.add_widget(self.volume_slider)
+
+        # Frequency
+        freq_label = Label(text=f"Frequency: {self.frequency:.1f} Hz", font_size=dp(14), color=self.WHITE)
+        freq_box = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        freq_down = Button(text="-", font_size=dp(16))
+        freq_down.bind(on_press=self.on_freq_down)
+        freq_up = Button(text="+", font_size=dp(16))
+        freq_up.bind(on_press=self.on_freq_up)
+        freq_box.add_widget(freq_down)
+        freq_box.add_widget(freq_label)
+        freq_box.add_widget(freq_up)
+        controls.add_widget(Label(text="Frequency:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(freq_box)
+
+        # Hz Step
+        hz_step_label = Label(text=f"Hz Step: {self.current_hz_step}", font_size=dp(14), color=self.WHITE)
+        hz_step_box = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        hz_down = Button(text="<", font_size=dp(16))
+        hz_down.bind(on_press=self.on_hz_down)
+        hz_up = Button(text=">", font_size=dp(16))
+        hz_up.bind(on_press=self.on_hz_up)
+        hz_down.bind(on_press=self.on_hz_down)
+        hz_up.bind(on_press=self.on_hz_up)
+        hz_step_box.add_widget(hz_down)
+        hz_step_box.add_widget(hz_step_label)
+        hz_step_box.add_widget(hz_up)
+        controls.add_widget(Label(text="Hz Step:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(hz_step_box)
+
+        # Wave Type
+        wave_type_label = Label(text=f"Wave Type: {self.wave_type.capitalize()}", font_size=dp(14), color=self.WHITE)
+        wave_box = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        wave_down = Button(text="<", font_size=dp(16))
+        wave_down.bind(on_press=self.on_wave_down)
+        wave_up = Button(text=">", font_size=dp(16))
+        wave_up.bind(on_press=self.on_wave_up)
+        wave_box.add_widget(wave_down)
+        wave_box.add_widget(wave_type_label)
+        wave_box.add_widget(wave_up)
+        controls.add_widget(Label(text="Wave Type:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(wave_box)
+
+        # Sweep
+        sweep_btn = Button(text="Toggle Sweep", font_size=dp(16), background_color=self.BLUE, size_hint_y=None, height=dp(40))
+        sweep_btn.bind(on_press=self.on_sweep_toggle)
+        controls.add_widget(Label(text="Sweep:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(sweep_btn)
+
+        # Sweep Duration
+        sweep_dur_label = Label(text=f"Sweep Duration: {self.sweep_durations[self.current_sweep_duration_index]}s", font_size=dp(14), color=self.WHITE)
+        sweep_dur_box = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        dur_down = Button(text="<", font_size=dp(16))
+        dur_down.bind(on_press=self.on_sweep_dur_down)
+        dur_up = Button(text=">", font_size=dp(16))
+        dur_up.bind(on_press=self.on_sweep_dur_up)
+        sweep_dur_box.add_widget(dur_down)
+        sweep_dur_box.add_widget(sweep_dur_label)
+        sweep_dur_box.add_widget(dur_up)
+        controls.add_widget(Label(text="Sweep Duration:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(sweep_dur_box)
+
+        # Sweep Start
+        sweep_start_label = Label(text=f"Sweep Start: {self.sweep_start:.1f} Hz", font_size=dp(14), color=self.WHITE)
+        sweep_start_box = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        start_down = Button(text="<", font_size=dp(16))
+        start_down.bind(on_press=self.on_sweep_start_down)
+        start_up = Button(text=">", font_size=dp(16))
+        start_up.bind(on_press=self.on_sweep_start_up)
+        sweep_start_box.add_widget(start_down)
+        sweep_start_box.add_widget(sweep_start_label)
+        sweep_start_box.add_widget(start_up)
+        controls.add_widget(Label(text="Sweep Start:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(sweep_start_box)
+
+        # Sweep End
+        sweep_end_label = Label(text=f"Sweep End: {self.sweep_end:.1f} Hz", font_size=dp(14), color=self.WHITE)
+        sweep_end_box = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        end_down = Button(text="<", font_size=dp(16))
+        end_down.bind(on_press=self.on_sweep_end_down)
+        end_up = Button(text=">", font_size=dp(16))
+        end_up.bind(on_press=self.on_sweep_end_up)
+        sweep_end_box.add_widget(end_down)
+        sweep_end_box.add_widget(sweep_end_label)
+        sweep_end_box.add_widget(end_up)
+        controls.add_widget(Label(text="Sweep End:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(sweep_end_box)
+
+        # Sweep Loop
+        self.loop_btn = Button(text="Loop Off", font_size=dp(16), background_color=self.ORANGE, size_hint_y=None, height=dp(40))
+        self.loop_btn.bind(on_press=self.on_loop_toggle)
+        controls.add_widget(Label(text="Sweep Loop:", font_size=dp(14), color=self.WHITE))
+        controls.add_widget(self.loop_btn)
+
+        controls_scroll.add_widget(controls)
+        main.add_widget(controls_scroll)
+
+        # Right panel: Visualization
+        viz_area = BoxLayout(orientation='vertical', size_hint_x=0.65, spacing=dp(5))
+
+        # Waveform visualization
+        self.viz_widget = Widget(size_hint_y=0.7)
+        viz_area.add_widget(self.viz_widget)
+
+        # Custom waveform editor
+        custom_panel = BoxLayout(orientation='vertical', size_hint_y=0.4, spacing=dp(5))
+
+        # Custom controls
+        custom_controls = BoxLayout(size_hint_y=0.2, spacing=dp(5))
+        custom_label = Label(text="Custom Waveform Editor", font_size=dp(14), color=self.WHITE)
+        custom_controls.add_widget(custom_label)
+
+        self.edit_toggle_btn = Button(text="Edit Off", font_size=dp(14), size_hint_x=0.25, background_color=self.BLUE)
+        self.edit_toggle_btn.bind(on_press=self.on_edit_toggle)
+        custom_controls.add_widget(self.edit_toggle_btn)
+
+        mode_btn = Button(text=f"Mode: {self.edit_mode.capitalize()}", font_size=dp(14), size_hint_x=0.25)
+        mode_btn.bind(on_press=self.on_mode_toggle)
+        self.mode_btn = mode_btn
+        custom_controls.add_widget(mode_btn)
+
+        reset_btn = Button(text="Reset", font_size=dp(14), background_color=self.RED, size_hint_x=0.25)
+        reset_btn.bind(on_press=self.on_reset_custom)
+        custom_controls.add_widget(reset_btn)
+
+        custom_panel.add_widget(custom_controls)
+
+        # Edit canvas
+        self.edit_widget = Widget(size_hint_y=0.8)
+        custom_panel.add_widget(self.edit_widget)
+
+        viz_area.add_widget(custom_panel)
+        main.add_widget(viz_area)
+
+        root.add_widget(main)
+
+        # Store labels for updates
+        self.freq_label = freq_label
+        self.hz_step_label = hz_step_label
+        self.wave_type_label = wave_type_label
+        self.sweep_dur_label = sweep_dur_label
+        self.sweep_start_label = sweep_start_label
+        self.sweep_end_label = sweep_end_label
+
+        # Bind touch
+        self.edit_widget.bind(on_touch_down=self.on_edit_touch_down)
+        self.edit_widget.bind(on_touch_move=self.on_edit_touch_move)
+        self.edit_widget.bind(on_touch_up=self.on_edit_touch_up)
+
+        return root
+
+        # Bind keyboard events
+        Window.bind(on_key_down=self.on_key_down)
+
+        # Bind mouse events to edit widget
+        self.edit_widget.bind(on_touch_down=self.on_edit_touch_down)
+        self.edit_widget.bind(on_touch_move=self.on_edit_touch_move)
+        self.edit_widget.bind(on_touch_up=self.on_edit_touch_up)
+
+        # Schedule updates
+        Clock.schedule_interval(self.update_display, 1/60)
+
+        return root
+
+    def set_volume(self, value):
+        self.volume = int(value)
+        if hasattr(self, 'volume_slider'):
+            self.volume_slider.value = self.volume
+
+    def toggle_sweep_loop(self):
+        self.sweep_loop = not self.sweep_loop
+        self.loop_btn.text = "Loop On" if self.sweep_loop else "Loop Off"
+
+    def toggle_drawing_mode_ui(self):
+        self.toggle_drawing_mode()
+
+    def on_play_pause(self, instance):
+        self.toggle_play_pause()
+
+    def on_sweep_toggle(self, instance):
+        self.toggle_sweep()
+
+    def on_hz_down(self, instance):
+        self.cycle_hz_step("down")
+
+    def on_hz_up(self, instance):
+        self.cycle_hz_step("up")
+
+    def on_freq_down(self, instance):
+        self.adjust_frequency("down")
+
+    def on_freq_up(self, instance):
+        self.adjust_frequency("up")
+
+    def on_wave_down(self, instance):
+        self.cycle_wave_type("down")
+
+    def on_wave_up(self, instance):
+        self.cycle_wave_type("up")
+
+    def on_sweep_dur_down(self, instance):
+        self.adjust_sweep_duration("down")
+
+    def on_sweep_dur_up(self, instance):
+        self.adjust_sweep_duration("up")
+
+    def on_sweep_start_down(self, instance):
+        self.adjust_sweep_start("down")
+
+    def on_sweep_start_up(self, instance):
+        self.adjust_sweep_start("up")
+
+    def on_sweep_end_down(self, instance):
+        self.adjust_sweep_end("down")
+
+    def on_sweep_end_up(self, instance):
+        self.adjust_sweep_end("up")
+
+    def on_loop_toggle(self, instance):
+        self.toggle_sweep_loop()
+
+    def on_edit_toggle(self, instance):
+        self.toggle_drawing_mode_ui()
+
+    def on_mode_toggle(self, instance):
+        self.toggle_edit_mode_ui()
+
+    def on_reset_custom(self, instance):
+        self.clear_custom_waveform()
+
+    def on_volume_change(self, instance, touch):
+        if not touch or touch.grab_current is not instance:
+            self.set_volume(int(instance.value))
+
+    def toggle_edit_mode_ui(self, btn=None):
+        self.edit_mode = 'free' if self.edit_mode == 'points' else 'points'
+        if hasattr(self, 'mode_btn'):
+            self.mode_btn.text = f"Mode: {self.edit_mode.capitalize()}"
+
+    def on_key_down(self, window, key, scancode, codepoint, modifier):
+        if codepoint == 'q':
+            self.stop()
+        elif key == 32:  # space
+            self.toggle_play_pause()
+        elif codepoint == 's':
+            self.toggle_sweep()
+        elif codepoint == 'c':
+            self.toggle_drawing_mode()
+        elif codepoint == 'p':
+            self.edit_mode = 'points'
+        elif codepoint == 'f':
+            self.edit_mode = 'free'
+        elif codepoint == 'r':
+            self.clear_custom_waveform()
+
+    def update_display(self, dt):
+        self.update_labels()
+        self.update_visualization()
+        self.update_edit_visualization()
+
+    def toggle_drawing_mode(self):
+        self.drawing_mode = not self.drawing_mode
+        if not self.drawing_mode:
+            self.update_custom_waveform()
+        else:
+            if self.edit_mode == 'free':
+                self.drawing_points = []
+
+    def clear_custom_waveform(self):
+        self.custom_waveform = np.sin(np.linspace(0, 2 * np.pi, 1000))
+        self.control_points = [(i / 9.0, math.sin(i / 9.0 * 2 * math.pi)) for i in range(10)]
+        self.drawing_points = []
+        self.wave_engine.set_custom_waveform(self.custom_waveform)
+
+    def on_edit_touch_down(self, instance, touch):
+        if self.drawing_mode and instance.collide_point(*touch.pos):
+            if self.edit_mode == 'points':
+                # Find the closest control point
+                min_dist = float('inf')
+                closest = None
+                for i, (nx, ny) in enumerate(self.control_points):
+                    sx = instance.x + nx * instance.width
+                    sy = instance.y + instance.height / 2 + ny * instance.height / 3
+                    dist = math.hypot(touch.x - sx, touch.y - sy)
+                    if dist < 20 and dist < min_dist:
+                        min_dist = dist
+                        closest = i
+                self.dragging_point = closest
+            elif self.edit_mode == 'free':
+                self.drawing_points = [(touch.x - instance.x, touch.y - instance.y)]
+
+    def on_edit_touch_move(self, instance, touch):
+        if self.drawing_mode and instance.collide_point(*touch.pos):
+            if self.edit_mode == 'points' and self.dragging_point is not None:
+                nx = self.control_points[self.dragging_point][0]
+                ny = (touch.y - instance.y - instance.height / 2) / (instance.height / 3)
+                ny = max(-1, min(1, ny))
+                self.control_points[self.dragging_point] = (nx, ny)
+                self.update_custom_waveform()
+            elif self.edit_mode == 'free':
+                self.drawing_points.append((touch.x - instance.x, touch.y - instance.y))
+
+    def on_edit_touch_up(self, instance, touch):
+        if self.drawing_mode:
+            if self.edit_mode == 'points':
+                self.dragging_point = None
+            elif self.edit_mode == 'free':
+                self.update_custom_waveform()
+
+    def update_custom_waveform(self):
+        if self.edit_mode == 'points':
+            x_vals = np.array([p[0] for p in self.control_points])
+            y_vals = np.array([p[1] for p in self.control_points])
+            x_new = np.linspace(0, 1, 1000)
+            self.custom_waveform = np.interp(x_new, x_vals, y_vals)
+        elif self.edit_mode == 'free' and len(self.drawing_points) > 1:
+            x_coords = [p[0] for p in self.drawing_points]
+            y_coords = [p[1] for p in self.drawing_points]
+            min_x = min(x_coords)
+            max_x = max(x_coords)
+            if max_x > min_x:
+                x_vals = np.array([(x - min_x) / (max_x - min_x) for x in x_coords])
+                y_vals = np.array([2 * (y / self.edit_widget.height) - 1 for y in y_coords])
+                sort_idx = np.argsort(x_vals)
+                x_vals = x_vals[sort_idx]
+                y_vals = y_vals[sort_idx]
+                x_new = np.linspace(0, 1, 1000)
+                self.custom_waveform = np.interp(x_new, x_vals, y_vals)
+            else:
+                self.custom_waveform = np.sin(np.linspace(0, 2 * np.pi, 1000))
+        self.wave_engine.set_custom_waveform(self.custom_waveform)
+
+    def update_labels(self):
+        is_anything_playing = self.is_playing or self.sweep_active
+        self.status_label.text = f"Status: {'Playing' if is_anything_playing else 'Paused'}"
+        self.status_label.color = self.GREEN if is_anything_playing else self.RED
+
+        # Update control labels
+        if hasattr(self, 'freq_label'):
+            if self.frequency >= 1000:
+                freq_display = f"{self.frequency/1000:.1f} kHz"
+            else:
+                freq_display = f"{self.frequency:.1f} Hz"
+            self.freq_label.text = f"Frequency: {freq_display}"
+
+        if hasattr(self, 'hz_step_label'):
+            self.hz_step_label.text = f"Hz Step: {self.current_hz_step}"
+
+        if hasattr(self, 'wave_type_label'):
+            self.wave_type_label.text = f"Wave Type: {self.wave_type.capitalize()}"
+
+        if hasattr(self, 'sweep_dur_label'):
+            self.sweep_dur_label.text = f"Sweep Duration: {self.sweep_durations[self.current_sweep_duration_index]}s"
+
+        if hasattr(self, 'sweep_start_label'):
+            if self.sweep_start >= 1000:
+                start_display = f"{self.sweep_start/1000:.1f} kHz"
+            else:
+                start_display = f"{self.sweep_start:.1f} Hz"
+            self.sweep_start_label.text = f"Sweep Start: {start_display}"
+
+        if hasattr(self, 'sweep_end_label'):
+            if self.sweep_end >= 1000:
+                end_display = f"{self.sweep_end/1000:.1f} kHz"
+            else:
+                end_display = f"{self.sweep_end:.1f} Hz"
+            self.sweep_end_label.text = f"Sweep End: {end_display}"
+
+    def update_visualization(self):
+        self.viz_widget.canvas.clear()
+        with self.viz_widget.canvas:
+            # Draw wave
+            Color(*self.GREEN if (self.is_playing or self.sweep_active) else self.RED)
+            frequency = (
+                self.sweep_current_frequency
+                if self.sweep_active and self.sweep_current_frequency > 0
+                else self.frequency
+            )
+            points = []
+            for x in range(int(self.viz_widget.width)):
+                wave_x = x / self.viz_widget.width
+                phase = (wave_x * 4 * math.pi) + (
+                    self.wave_animation_offset * frequency * 0.01
+                )
+                if self.wave_type == "sine":
+                    wave_y = math.sin(phase)
+                elif self.wave_type == "square":
+                    wave_y = 1 if math.sin(phase) > 0 else -1
+                elif self.wave_type == "sawtooth":
+                    wave_y = 2 * ((phase / (2 * math.pi)) % 1) - 1
+                elif self.wave_type == "custom":
+                    normalized_phase = phase % (2 * math.pi)
+                    index = int(
+                        normalized_phase / (2 * math.pi) * (len(self.custom_waveform) - 1)
+                    )
+                    wave_y = self.custom_waveform[index]
+                wave_y *= self.volume / 100.0
+                screen_x = self.viz_widget.x + x
+                screen_y = (
+                    self.viz_widget.y
+                    + self.viz_widget.height // 2
+                    - int(wave_y * self.viz_widget.height // 3)
+                )
+                points.extend([screen_x, screen_y])
+            if len(points) > 2:
+                Line(points=points, width=4)
+
+            # Draw control points if in drawing mode
+            if self.drawing_mode:
+                Color(0, 1, 0, 1)  # green
+                for nx, ny in self.control_points:
+                    sx = self.viz_widget.x + nx * self.viz_widget.width
+                    sy = self.viz_widget.y + self.viz_widget.height / 2 + ny * self.viz_widget.height / 3
+                    Ellipse(pos=(sx - 5, sy - 5), size=(10, 10))
+
+        # Update animation offset
+        current_time = time.time()
+        self.wave_animation_offset += (current_time - self.last_frame_time) * 200
+        self.last_frame_time = current_time
+
+    def update_edit_visualization(self):
+        self.edit_widget.canvas.clear()
+        if self.drawing_mode:
+            with self.edit_widget.canvas:
+                if self.edit_mode == 'points':
+                    Color(0, 1, 0, 1)  # green
+                    for nx, ny in self.control_points:
+                        sx = nx * self.edit_widget.width
+                        sy = self.edit_widget.height / 2 + ny * self.edit_widget.height / 3
+                        Ellipse(pos=(sx - 5, sy - 5), size=(10, 10))
+                elif self.edit_mode == 'free':
+                    Color(1, 0, 0, 1)  # red
+                    if len(self.drawing_points) > 1:
+                        points = []
+                        for px, py in self.drawing_points:
+                            points.extend([px, py])
+                        Line(points=points, width=4)
 
     def _initialize_audio(self):
         """Initialize the professional audio system with sounddevice"""
@@ -690,16 +1162,9 @@ class WaveGenerator:
             )
         self.current_hz_step = self.hz_steps[self.current_hz_step_index]
 
-    def clear_screen(self):
-        """Clear the console screen"""
-        os.system("cls" if os.name == "nt" else "clear")
 
-    def draw_play_icon(self, x, y, size=16, color=None):
-        """Draw a simple play triangle icon"""
-        if color is None:
-            color = self.GREEN
-        points = [(x, y), (x, y + size), (x + size, y + size // 2)]
-        pygame.draw.polygon(self.screen, color, points)
+
+
 
     def draw_pause_icon(self, x, y, size=16, color=None):
         """Draw a simple pause icon (two rectangles)"""
@@ -1172,8 +1637,7 @@ class WaveGenerator:
 
         # Draw the wave line
         if len(points) > 1:
-            color = self.ORANGE if self.sweep_active else self.RED
-            pygame.draw.lines(self.screen, color, False, points, 2)
+            Line(points=points, width=4)
 
         # Draw frequency indicators
         if self.sweep_active:
@@ -1447,38 +1911,9 @@ class WaveGenerator:
             self.sweep_active = False
             if self.sweep_thread:
                 self.sweep_thread.join()
-        
-        # Clean up pygame (GUI only)
-        pygame.quit()
-
-    def run(self):
-        """Main application loop"""
-        print("Initializing Wave Generator...")
-        print("Make sure to run this in a terminal that supports keyboard input!")
-        time.sleep(1)
-
-        try:
-            self.display_menu()
-            self.handle_input()
-        except Exception as e:
-            print(f"Error: {e}")
-        finally:
-            self.cleanup()
-            print("\nThanks for using Wave Generator! 🎵")
 
 
-def main():
-    """Main function to run the wave generator"""
-    try:
-        generator = WaveGenerator()
-        generator.run()
-    except KeyboardInterrupt:
-        print("\nExiting...")
-    except Exception as e:
-        print(f"Error initializing application: {e}")
-        print("Make sure you have the required dependencies installed:")
-        print("pip install pygame numpy keyboard")
 
 
 if __name__ == "__main__":
-    main()
+    WaveGenerator().run()
